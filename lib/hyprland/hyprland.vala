@@ -303,6 +303,19 @@ public class Hyprland : Object {
         }
     }
 
+    private async bool try_add_client(string addr) throws Error {
+        if (get_client(addr) != null) {
+            return false;
+        }
+        var client = new Client();
+        _clients.insert(addr, client);
+        yield sync_clients();
+        yield sync_workspaces();
+        client_added(client);
+        notify_property("clients");
+        return true;
+    }
+
     private async void handle_event(string line) throws Error {
         var args = line.split(">>");
 
@@ -311,6 +324,7 @@ public class Hyprland : Object {
                 yield sync_workspaces();
                 yield sync_monitors();
                 focused_workspace = get_workspace(int.parse(args[1]));
+                notify_property("monitors");
                 break;
 
             case "focusedmon":
@@ -319,19 +333,13 @@ public class Hyprland : Object {
                 focused_workspace = get_workspace_by_name(argv[1]);
                 break;
 
-            // first event that signals a new client
+            // when a client opens as the active window, this is the first event that signals the new client
             case "activewindowv2":
-                if (args[1] != "" && get_client(args[1]) == null) {
-                    var client = new Client();
-                    _clients.insert(args[1], client);
-                    yield sync_clients();
+                if (args[1] == "" || !(yield try_add_client(args[1]))) {
                     yield sync_workspaces();
-                    client_added(client);
-                    notify_property("clients");
-                    focused_client = client;
-                } else {
-                    focused_client = get_client(args[1]);
                 }
+                focused_client = get_client(args[1]);
+                notify_property("workspaces");
                 break;
 
             // TODO: nag vaxry for fullscreenv2 that passes address
@@ -393,6 +401,10 @@ public class Hyprland : Object {
                 break;
 
             case "openwindow":
+                var addr = args[1].split(",")[0];
+                if (yield try_add_client(addr)) {
+                    break;
+                }
                 yield sync_clients();
                 yield sync_workspaces();
                 break;
@@ -411,6 +423,7 @@ public class Hyprland : Object {
                 var argv = args[1].split(",");
                 client_moved(get_client(argv[0]), get_workspace(int.parse(argv[1])));
                 get_client(argv[0]).moved_to(get_workspace(int.parse(argv[1])));
+                notify_property("clients");
                 break;
 
             case "submap":
@@ -423,7 +436,9 @@ public class Hyprland : Object {
                 floating(get_client(argv[0]), argv[1] == "0");
                 break;
 
+            // when a client opens as an urgent window, this may be the first event that signals the new client
             case "urgent":
+                yield try_add_client(args[1]);
                 urgent(get_client(args[1]));
                 break;
 
